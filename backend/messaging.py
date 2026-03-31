@@ -11,7 +11,7 @@ from db import Recipient
 
 logger = logging.getLogger(__name__)
 
-SESSION = "campaign_session"
+SESSION = os.getenv("SESSION_PATH", "campaign_session")
 BATCH_SIZE = 50
 BATCH_PAUSE = 60  # seconds between batches to avoid Telegram rate limits
 MIN_DELAY = 3     # min seconds between individual messages
