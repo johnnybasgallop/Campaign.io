@@ -1,5 +1,7 @@
 import { useAuth, RedirectToSignIn, UserButton } from "@clerk/react";
 import { useEffect, useRef, useState } from "react";
+import { MdScheduleSend } from "react-icons/md";
+
 import "./index.css";
 
 const API = "http://localhost:8000";
@@ -32,6 +34,7 @@ type LogEntry = {
 function ProgressCard({ campaignId }: { campaignId: string }) {
   const [data, setData] = useState<CampaignStatus | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [showLogs, setShowLogs] = useState(true);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const logsEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -86,15 +89,17 @@ function ProgressCard({ campaignId }: { campaignId: string }) {
   return (
     <div className="rounded-2xl border border-purple-100 bg-purple-50 p-6 mb-10">
       <div className="flex items-center justify-between mb-4">
-        <span className="text-sm font-semibold text-purple-900">Campaign Progress</span>
+        <span className="text-sm font-semibold text-purple-900">
+          Campaign Progress
+        </span>
         <div className="flex items-center gap-2">
           <span
             className={`text-xs font-medium px-2.5 py-1 rounded-full ${
               isComplete
                 ? "bg-green-100 text-green-700"
                 : isCancelled
-                ? "bg-red-100 text-red-600"
-                : "bg-purple-100 text-purple-700"
+                  ? "bg-red-100 text-red-600"
+                  : "bg-green-100 text-green-700"
             }`}
           >
             {isComplete ? "Complete" : isCancelled ? "Cancelled" : "Running"}
@@ -138,21 +143,39 @@ function ProgressCard({ campaignId }: { campaignId: string }) {
         {isComplete
           ? `${data.sent} sent, ${data.failed} failed`
           : isCancelled
-          ? `Cancelled after ${data.sent} sent, ${data.failed} failed`
-          : `${pct}% complete · Est. ${formatTime(estimatedSeconds)} remaining`}
+            ? `Cancelled after ${data.sent} sent, ${data.failed} failed`
+            : `${pct}% complete · Est. ${formatTime(estimatedSeconds)} remaining`}
       </p>
 
       {/* Log panel */}
       {logs.length > 0 && (
-        <div className="mt-5 rounded-xl bg-gray-950 p-4 h-48 overflow-y-auto font-mono text-xs space-y-1">
+        <div className="mt-5">
+          <button
+            onClick={() => setShowLogs((v) => !v)}
+            className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 transition mb-2"
+          >
+            <span>{showLogs ? "▾" : "▸"}</span>
+            <span>{showLogs ? "Hide" : "Show"} logs</span>
+          </button>
+        </div>
+      )}
+      {logs.length > 0 && showLogs && (
+        <div className="rounded-xl bg-gray-950 p-4 h-48 overflow-y-auto font-mono text-xs space-y-1">
           {logs.map((log, i) => (
-            <div key={i} className={`leading-relaxed ${
-              log.level === "error"   ? "text-red-400"    :
-              log.level === "warning" ? "text-yellow-400" :
-              log.event === "sent"    ? "text-green-400"  :
-              log.event === "complete"|| log.event === "cancelled" ? "text-purple-400" :
-              "text-gray-400"
-            }`}>
+            <div
+              key={i}
+              className={`leading-relaxed ${
+                log.level === "error"
+                  ? "text-red-400"
+                  : log.level === "warning"
+                    ? "text-yellow-400"
+                    : log.event === "sent"
+                      ? "text-green-400"
+                      : log.event === "complete" || log.event === "cancelled"
+                        ? "text-purple-400"
+                        : "text-gray-400"
+              }`}
+            >
               <span className="text-gray-600 mr-2">
                 {new Date(log.timestamp).toLocaleTimeString()}
               </span>
@@ -170,7 +193,9 @@ function Dashboard() {
   const [groups, setGroups] = useState<string[]>([]);
   const [selectedGroup, setSelectedGroup] = useState("");
   const [message, setMessage] = useState("");
-  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">(
+    "idle",
+  );
   const [campaignId, setCampaignId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -190,7 +215,10 @@ function Dashboard() {
       const res = await fetch(`${API}/campaign/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ group_name: selectedGroup, message: message.replace(/\/n/g, "\n") }),
+        body: JSON.stringify({
+          group_name: selectedGroup,
+          message: message.replace(/\/n/g, "\n"),
+        }),
       });
       if (!res.ok) throw new Error();
       const data = await res.json();
@@ -208,9 +236,12 @@ function Dashboard() {
     <div className="min-h-screen bg-white">
       {/* Header */}
       <header className="border-b border-purple-100 px-8 py-4 flex items-center justify-between">
-        <span className="text-purple-900 font-semibold text-lg tracking-tight">
-          Campaign
-        </span>
+        <div className="flex items-center gap-2.5">
+          <MdScheduleSend className="text-purple-800 text-2xl" />
+          <span className="text-gray-900 font-bold text-lg tracking-tight">
+            DMOCampaigns
+          </span>
+        </div>
         <UserButton />
       </header>
 
@@ -272,7 +303,6 @@ function Dashboard() {
                   : "Publish"}
           </button>
         </div>
-
       </main>
     </div>
   );
