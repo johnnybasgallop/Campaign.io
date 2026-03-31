@@ -13,7 +13,7 @@ from db import Recipient
 logger = logging.getLogger(__name__)
 
 # Use StringSession from env var in production, fall back to file-based session locally
-SESSION = StringSession(os.getenv("TELEGRAM_SESSION")) if os.getenv("TELEGRAM_SESSION") else "campaign_session"
+SESSION = StringSession(os.getenv("TELEGRAM_SESSION").strip()) if os.getenv("TELEGRAM_SESSION") else "campaign_session"
 BATCH_SIZE = 50
 BATCH_PAUSE = 60  # seconds between batches to avoid Telegram rate limits
 MIN_DELAY = 3     # min seconds between individual messages
