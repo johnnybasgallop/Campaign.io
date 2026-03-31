@@ -1,9 +1,10 @@
+import asyncio
 import json
 import logging
 import os
 import uuid
+from datetime import datetime, timezone
 
-from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,33 +20,30 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 app = FastAPI()
 
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-KAFKA_TOPIC = "campaign-logs"
-
-# In-memory campaign state store
+# In-memory campaign state and log queues
 campaigns: dict[str, dict] = {}
-
-producer: AIOKafkaProducer | None = None
-
-
-@app.on_event("startup")
-async def startup():
-    global producer
-    producer = AIOKafkaProducer(bootstrap_servers=KAFKA_BOOTSTRAP)
-    await producer.start()
+log_queues: dict[str, list[asyncio.Queue]] = {}
 
 
-@app.on_event("shutdown")
-async def shutdown():
-    if producer:
-        await producer.stop()
+async def publish_log(campaign_id: str, event: str, message: str, level: str = "info"):
+    payload = {
+        "campaign_id": campaign_id,
+        "event": event,
+        "level": level,
+        "message": message,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    for q in log_queues.get(campaign_id, []):
+        await q.put(payload)
 
 
 class CampaignRequest(BaseModel):
@@ -84,9 +82,10 @@ async def send_campaign(request: CampaignRequest, background_tasks: BackgroundTa
         "failed": 0,
         "cancelled": False,
     }
+    log_queues[campaign_id] = []
 
     background_tasks.add_task(
-        messaging_campaign, recipients, request.message, campaign_id, campaigns, producer
+        messaging_campaign, recipients, request.message, campaign_id, campaigns, publish_log
     )
 
     return {"status": "started", "campaign_id": campaign_id, "recipients": len(recipients)}
@@ -116,23 +115,19 @@ async def campaign_logs(campaign_id: str):
     if campaign_id not in campaigns:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
+    q: asyncio.Queue = asyncio.Queue()
+    log_queues.setdefault(campaign_id, []).append(q)
+
     async def event_stream():
-        consumer = AIOKafkaConsumer(
-            KAFKA_TOPIC,
-            bootstrap_servers=KAFKA_BOOTSTRAP,
-            auto_offset_reset="earliest",
-            group_id=f"frontend-{campaign_id}-{uuid.uuid4()}",
-        )
-        await consumer.start()
         try:
-            async for msg in consumer:
-                data = json.loads(msg.value)
-                if data.get("campaign_id") != campaign_id:
-                    continue
-                yield f"data: {json.dumps(data)}\n\n"
-                if data.get("event") in ("complete", "cancelled"):
+            while True:
+                entry = await q.get()
+                yield f"data: {json.dumps(entry)}\n\n"
+                if entry.get("event") in ("complete", "cancelled"):
                     break
         finally:
-            await consumer.stop()
+            log_queues[campaign_id].remove(q)
+            if not log_queues[campaign_id]:
+                log_queues.pop(campaign_id, None)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
