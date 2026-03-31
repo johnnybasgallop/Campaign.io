@@ -16,7 +16,7 @@ app = FastAPI()
 
 
 class CampaignRequest(BaseModel):
-    group_name: str = ""
+    group_name: str = "Testinggc"
     message: str
 
 

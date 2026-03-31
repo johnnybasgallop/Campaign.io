@@ -25,29 +25,34 @@ async def messaging_campaign(recipients: list[Recipient], message: str) -> dict:
     failed = 0
 
     async with TelegramClient(SESSION, api_id, api_hash) as client:
+        group_id = recipients[0].group_id
+        logger.info(f"Caching entities from group {group_id}...")
+        await client.get_participants(group_id)
+        logger.info("Entity cache populated, starting campaign...")
+
         for i, recipient in enumerate(recipients):
             try:
-                await client.send_message(recipient.tele_id, message)
+                await client.send_message(recipient.telegram_id, message)
                 sent += 1
-                logger.info(f"[{i+1}/{len(recipients)}] Sent to {recipient.tele_id}")
+                logger.info(f"[{i+1}/{len(recipients)}] Sent to {recipient.telegram_id}")
 
             except FloodWaitError as e:
                 wait = e.seconds + 10
                 logger.warning(f"FloodWait — sleeping {wait}s")
                 await asyncio.sleep(wait)
                 try:
-                    await client.send_message(recipient.tele_id, message)
+                    await client.send_message(recipient.telegram_id, message)
                     sent += 1
                 except Exception as retry_err:
-                    logger.error(f"Retry failed for {recipient.tele_id}: {retry_err}")
+                    logger.error(f"Retry failed for {recipient.telegram_id}: {retry_err}")
                     failed += 1
 
             except (UserIsBlockedError, InputUserDeactivatedError) as e:
-                logger.info(f"Skipping {recipient.tele_id}: {type(e).__name__}")
+                logger.info(f"Skipping {recipient.telegram_id}: {type(e).__name__}")
                 failed += 1
 
             except Exception as e:
-                logger.error(f"Failed for {recipient.tele_id}: {e}")
+                logger.error(f"Failed for {recipient.telegram_id}: {e}")
                 failed += 1
 
             if (i + 1) % BATCH_SIZE == 0:

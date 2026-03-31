@@ -5,8 +5,9 @@ from dataclasses import dataclass
 
 @dataclass
 class Recipient:
-    tele_id: int
+    telegram_id: int
     group_name: str
+    group_id: int
 
 
 async def fetch_recipients(group_name: str) -> list[Recipient]:
@@ -20,12 +21,12 @@ async def fetch_recipients(group_name: str) -> list[Recipient]:
     try:
         if group_name:
             rows = await conn.fetch(
-                'SELECT tele_id, groupname FROM "group-backup" WHERE groupname = $1',
+                'SELECT telegram_id, group_name, group_id FROM "group-backup" WHERE group_name = $1',
                 group_name,
             )
         else:
-            rows = await conn.fetch('SELECT tele_id, groupname FROM "group-backup"')
+            rows = await conn.fetch('SELECT telegram_id, group_name, group_id FROM "group-backup"')
 
-        return [Recipient(tele_id=row["tele_id"], group_name=row["groupname"]) for row in rows]
+        return [Recipient(telegram_id=row["telegram_id"], group_name=row["group_name"], group_id=row["group_id"]) for row in rows]
     finally:
         await conn.close()
