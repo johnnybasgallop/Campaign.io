@@ -17,12 +17,16 @@ MIN_DELAY = 3      # minimum seconds between individual messages
 MAX_DELAY = 8      # maximum seconds between individual messages
 
 
-async def messaging_campaign(recipients: list[Recipient], message: str) -> dict:
+async def messaging_campaign(
+    recipients: list[Recipient],
+    message: str,
+    campaign_id: str,
+    campaigns: dict,
+) -> dict:
     api_id = int(os.getenv("TELEGRAM_API_ID"))
     api_hash = os.getenv("TELEGRAM_API_HASH")
 
-    sent = 0
-    failed = 0
+    state = campaigns[campaign_id]
 
     async with TelegramClient(SESSION, api_id, api_hash) as client:
         group_id = recipients[0].group_id
@@ -33,7 +37,7 @@ async def messaging_campaign(recipients: list[Recipient], message: str) -> dict:
         for i, recipient in enumerate(recipients):
             try:
                 await client.send_message(recipient.telegram_id, message)
-                sent += 1
+                state["sent"] += 1
                 logger.info(f"[{i+1}/{len(recipients)}] Sent to {recipient.telegram_id}")
 
             except FloodWaitError as e:
@@ -42,18 +46,18 @@ async def messaging_campaign(recipients: list[Recipient], message: str) -> dict:
                 await asyncio.sleep(wait)
                 try:
                     await client.send_message(recipient.telegram_id, message)
-                    sent += 1
+                    state["sent"] += 1
                 except Exception as retry_err:
                     logger.error(f"Retry failed for {recipient.telegram_id}: {retry_err}")
-                    failed += 1
+                    state["failed"] += 1
 
             except (UserIsBlockedError, InputUserDeactivatedError) as e:
                 logger.info(f"Skipping {recipient.telegram_id}: {type(e).__name__}")
-                failed += 1
+                state["failed"] += 1
 
             except Exception as e:
                 logger.error(f"Failed for {recipient.telegram_id}: {e}")
-                failed += 1
+                state["failed"] += 1
 
             if (i + 1) % BATCH_SIZE == 0:
                 logger.info(f"Batch pause — {BATCH_PAUSE}s")
@@ -61,6 +65,7 @@ async def messaging_campaign(recipients: list[Recipient], message: str) -> dict:
             else:
                 await asyncio.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
 
-    result = {"total": len(recipients), "sent": sent, "failed": failed}
+    state["status"] = "complete"
+    result = {"total": len(recipients), "sent": state["sent"], "failed": state["failed"]}
     logger.info(f"Campaign complete: {result}")
     return result

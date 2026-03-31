@@ -1,8 +1,9 @@
 import logging
 import os
+import uuid
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -21,6 +22,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# In-memory campaign state store
+campaigns: dict[str, dict] = {}
 
 
 class CampaignRequest(BaseModel):
@@ -51,6 +55,23 @@ async def send_campaign(request: CampaignRequest, background_tasks: BackgroundTa
     if not recipients:
         return {"error": "No recipients found for the given group_name"}
 
-    background_tasks.add_task(messaging_campaign, recipients, request.message)
+    campaign_id = str(uuid.uuid4())
+    campaigns[campaign_id] = {
+        "status": "running",
+        "total": len(recipients),
+        "sent": 0,
+        "failed": 0,
+    }
 
-    return {"status": "started", "recipients": len(recipients)}
+    background_tasks.add_task(
+        messaging_campaign, recipients, request.message, campaign_id, campaigns
+    )
+
+    return {"status": "started", "campaign_id": campaign_id, "recipients": len(recipients)}
+
+
+@app.get("/campaign/{campaign_id}/status")
+async def campaign_status(campaign_id: str):
+    if campaign_id not in campaigns:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return campaigns[campaign_id]
