@@ -46,12 +46,14 @@ async def run_campaign(
                 await log("cancelled", "Campaign cancelled by user")
                 break
 
-            # Resolve entity individually — avoids the 200-member cap from get_participants
+            # Resolve entity individually — avoids the 200-member cap from get_participants.
+            # get_entity makes an API call and works for users in a mutual group even without
+            # a cached access hash, unlike get_input_entity which only checks local cache.
             try:
-                entity = await client.get_input_entity(recipient.telegram_id)
-            except ValueError:
+                entity = await client.get_entity(recipient.telegram_id)
+            except (ValueError, Exception) as e:
                 state["failed"] += 1
-                await log("skipped", f"Skipped {recipient.telegram_id}: could not resolve entity", "warning")
+                await log("skipped", f"Skipped {recipient.telegram_id}: could not resolve entity ({e})", "warning")
                 continue
 
             try:
