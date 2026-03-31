@@ -41,19 +41,28 @@ async def run_campaign(
     await log("started", f"Campaign started — {len(recipients)} recipients")
 
     async with TelegramClient(SESSION, api_id, api_hash) as client:
-        # Telethon needs entities cached before we can message individuals
+        # Fetch all participants and build a lookup by user_id so we can
+        # send using the resolved entity rather than a bare integer ID.
+        # StringSession has no local cache so bare IDs fail without this.
         group_id = recipients[0].group_id
         await log("info", f"Caching entities from group {group_id}...")
-        await client.get_participants(group_id)
-        await log("info", "Entity cache ready, sending messages...")
+        participants = await client.get_participants(group_id)
+        entity_map = {p.id: p for p in participants}
+        await log("info", f"Cached {len(entity_map)} entities, sending messages...")
 
         for i, recipient in enumerate(recipients):
             if state.get("cancelled"):
                 await log("cancelled", "Campaign cancelled by user")
                 break
 
+            entity = entity_map.get(recipient.telegram_id)
+            if entity is None:
+                state["failed"] += 1
+                await log("skipped", f"Skipped {recipient.telegram_id}: not found in group cache", "warning")
+                continue
+
             try:
-                await client.send_message(recipient.telegram_id, message)
+                await client.send_message(entity, message)
                 state["sent"] += 1
                 await log("sent", f"[{i+1}/{len(recipients)}] Sent to {recipient.telegram_id}")
 
@@ -63,7 +72,7 @@ async def run_campaign(
                 await asyncio.sleep(wait)
                 # Retry once after the flood wait clears
                 try:
-                    await client.send_message(recipient.telegram_id, message)
+                    await client.send_message(entity, message)
                     state["sent"] += 1
                     await log("sent", f"[{i+1}/{len(recipients)}] Sent to {recipient.telegram_id} (retry)")
                 except Exception as retry_err:
