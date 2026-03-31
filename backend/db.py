@@ -34,7 +34,7 @@ class Recipient:
 async def fetch_recipients(group_name: str) -> list[Recipient]:
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
-            'SELECT telegram_id, group_name, group_id FROM "group-backup" WHERE group_name = $1',
+            'SELECT DISTINCT ON (telegram_id) telegram_id, group_name, group_id FROM "group-backup" WHERE group_name = $1',
             group_name,
         )
     return [
