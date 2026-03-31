@@ -7,6 +7,8 @@ from typing import Awaitable, Callable
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, PeerFloodError, InputUserDeactivatedError, UserIsBlockedError
 from telethon.sessions import StringSession
+from telethon.tl.functions.channels import GetParticipantsRequest
+from telethon.tl.types import ChannelParticipantsSearch
 
 from db import Recipient
 
@@ -23,6 +25,36 @@ MAX_DELAY = 8     # max seconds between individual messages
 Publish = Callable[[str, str, str, str], Awaitable[None]]
 
 
+async def fetch_all_participants(client: TelegramClient, group_id: int) -> dict:
+    """
+    Manually paginate GetParticipantsRequest to bypass Telethon's 200-member cap.
+    As a channel admin, Telegram allows full pagination via offset.
+    Returns a dict of {user_id: user_entity}.
+    """
+    entity_map = {}
+    offset = 0
+    limit = 200
+
+    while True:
+        result = await client(GetParticipantsRequest(
+            channel=group_id,
+            filter=ChannelParticipantsSearch(q=''),
+            offset=offset,
+            limit=limit,
+            hash=0,
+        ))
+        if not result.users:
+            break
+        for user in result.users:
+            entity_map[user.id] = user
+        offset += len(result.participants)
+        if len(result.participants) < limit:
+            break
+        await asyncio.sleep(1)  # avoid hitting rate limits during fetch
+
+    return entity_map
+
+
 async def run_campaign(
     recipients: list[Recipient],
     message: str,
@@ -34,26 +66,31 @@ async def run_campaign(
     api_hash = os.getenv("TELEGRAM_API_HASH")
     state = campaigns[campaign_id]
 
-    # Shorthand so call sites aren't verbose
     async def log(event: str, msg: str, level: str = "info"):
         await publish(campaign_id, event, msg, level)
 
     await log("started", f"Campaign started — {len(recipients)} recipients")
 
     async with TelegramClient(SESSION, api_id, api_hash) as client:
+        group_id = recipients[0].group_id
+        await log("info", f"Fetching all participants from group {group_id}...")
+        try:
+            entity_map = await fetch_all_participants(client, group_id)
+        except Exception as e:
+            await log("failed", f"Could not fetch participants: {e}", "error")
+            state["status"] = "complete"
+            return
+        await log("info", f"Cached {len(entity_map)} entities, sending messages...")
+
         for i, recipient in enumerate(recipients):
             if state.get("cancelled"):
                 await log("cancelled", "Campaign cancelled by user")
                 break
 
-            # Resolve entity individually — avoids the 200-member cap from get_participants.
-            # get_entity makes an API call and works for users in a mutual group even without
-            # a cached access hash, unlike get_input_entity which only checks local cache.
-            try:
-                entity = await client.get_entity(recipient.telegram_id)
-            except (ValueError, Exception) as e:
+            entity = entity_map.get(recipient.telegram_id)
+            if entity is None:
                 state["failed"] += 1
-                await log("skipped", f"Skipped {recipient.telegram_id}: could not resolve entity ({e})", "warning")
+                await log("skipped", f"Skipped {recipient.telegram_id}: not found in group", "warning")
                 continue
 
             try:
@@ -74,8 +111,8 @@ async def run_campaign(
                     await log("failed", f"Retry failed for {recipient.telegram_id}: {retry_err}", "error")
 
             except PeerFloodError:
-                await log("failed", f"Skipped {recipient.telegram_id}: account restricted from messaging non-contacts (PeerFlood)", "error")
                 state["failed"] += 1
+                await log("failed", f"Skipped {recipient.telegram_id}: account restricted from messaging non-contacts (PeerFlood)", "error")
 
             except (UserIsBlockedError, InputUserDeactivatedError) as e:
                 state["failed"] += 1
@@ -85,7 +122,6 @@ async def run_campaign(
                 state["failed"] += 1
                 await log("failed", f"Failed for {recipient.telegram_id}: {e}", "error")
 
-            # Pause between batches to stay within Telegram's rate limits
             if (i + 1) % BATCH_SIZE == 0:
                 await log("batch_pause", f"Batch of {BATCH_SIZE} done — pausing {BATCH_PAUSE}s", "warning")
                 await asyncio.sleep(BATCH_PAUSE)
