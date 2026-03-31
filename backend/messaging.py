@@ -5,7 +5,7 @@ import random
 from typing import Awaitable, Callable
 
 from telethon import TelegramClient
-from telethon.errors import FloodWaitError, FloodError, InputUserDeactivatedError, UserIsBlockedError
+from telethon.errors import FloodWaitError, PeerFloodError, InputUserDeactivatedError, UserIsBlockedError
 from telethon.sessions import StringSession
 
 from db import Recipient
@@ -47,7 +47,7 @@ async def run_campaign(
         group_id = recipients[0].group_id
         await log("info", f"Caching entities from group {group_id}...")
         try:
-            participants = await client.get_participants(group_id, limit=None)
+            participants = await client.get_participants(group_id, limit=None, aggressive=True)
         except ValueError:
             await log("failed", "The messenger account is not a member of the target group — please join the group and retry.", "error")
             state["status"] = "complete"
@@ -84,9 +84,9 @@ async def run_campaign(
                     state["failed"] += 1
                     await log("failed", f"Retry failed for {recipient.telegram_id}: {retry_err}", "error")
 
-            except FloodError:
+            except PeerFloodError:
                 wait = 30
-                await log("flood_wait", f"Too many requests — pausing {wait}s", "warning")
+                await log("flood_wait", f"PeerFlood — account flagged for too many DMs, pausing {wait}s", "warning")
                 await asyncio.sleep(wait)
                 try:
                     await client.send_message(entity, message)
