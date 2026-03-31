@@ -1,10 +1,13 @@
+import json
 import logging
 import os
 import uuid
 
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 load_dotenv()
@@ -23,8 +26,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+KAFKA_TOPIC = "campaign-logs"
+
 # In-memory campaign state store
 campaigns: dict[str, dict] = {}
+
+producer: AIOKafkaProducer | None = None
+
+
+@app.on_event("startup")
+async def startup():
+    global producer
+    producer = AIOKafkaProducer(bootstrap_servers=KAFKA_BOOTSTRAP)
+    await producer.start()
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    if producer:
+        await producer.stop()
 
 
 class CampaignRequest(BaseModel):
@@ -65,7 +86,7 @@ async def send_campaign(request: CampaignRequest, background_tasks: BackgroundTa
     }
 
     background_tasks.add_task(
-        messaging_campaign, recipients, request.message, campaign_id, campaigns
+        messaging_campaign, recipients, request.message, campaign_id, campaigns, producer
     )
 
     return {"status": "started", "campaign_id": campaign_id, "recipients": len(recipients)}
@@ -88,3 +109,30 @@ async def cancel_campaign(campaign_id: str):
     state["cancelled"] = True
     state["status"] = "cancelled"
     return {"status": "cancelled"}
+
+
+@app.get("/campaign/{campaign_id}/logs")
+async def campaign_logs(campaign_id: str):
+    if campaign_id not in campaigns:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    async def event_stream():
+        consumer = AIOKafkaConsumer(
+            KAFKA_TOPIC,
+            bootstrap_servers=KAFKA_BOOTSTRAP,
+            auto_offset_reset="earliest",
+            group_id=f"frontend-{campaign_id}-{uuid.uuid4()}",
+        )
+        await consumer.start()
+        try:
+            async for msg in consumer:
+                data = json.loads(msg.value)
+                if data.get("campaign_id") != campaign_id:
+                    continue
+                yield f"data: {json.dumps(data)}\n\n"
+                if data.get("event") in ("complete", "cancelled"):
+                    break
+        finally:
+            await consumer.stop()
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

@@ -22,9 +22,18 @@ function formatTime(seconds: number): string {
   return s > 0 ? `~${m}m ${s}s` : `~${m}m`;
 }
 
+type LogEntry = {
+  event: string;
+  level: string;
+  message: string;
+  timestamp: string;
+};
+
 function ProgressCard({ campaignId }: { campaignId: string }) {
   const [data, setData] = useState<CampaignStatus | null>(null);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const logsEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const poll = async () => {
@@ -43,6 +52,20 @@ function ProgressCard({ campaignId }: { campaignId: string }) {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [campaignId]);
+
+  useEffect(() => {
+    const es = new EventSource(`${API}/campaign/${campaignId}/logs`);
+    es.onmessage = (e) => {
+      const entry: LogEntry = JSON.parse(e.data);
+      setLogs((prev) => [...prev, entry]);
+    };
+    es.onerror = () => es.close();
+    return () => es.close();
+  }, [campaignId]);
+
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logs]);
 
   if (!data) return null;
 
@@ -118,6 +141,27 @@ function ProgressCard({ campaignId }: { campaignId: string }) {
           ? `Cancelled after ${data.sent} sent, ${data.failed} failed`
           : `${pct}% complete · Est. ${formatTime(estimatedSeconds)} remaining`}
       </p>
+
+      {/* Log panel */}
+      {logs.length > 0 && (
+        <div className="mt-5 rounded-xl bg-gray-950 p-4 h-48 overflow-y-auto font-mono text-xs space-y-1">
+          {logs.map((log, i) => (
+            <div key={i} className={`leading-relaxed ${
+              log.level === "error"   ? "text-red-400"    :
+              log.level === "warning" ? "text-yellow-400" :
+              log.event === "sent"    ? "text-green-400"  :
+              log.event === "complete"|| log.event === "cancelled" ? "text-purple-400" :
+              "text-gray-400"
+            }`}>
+              <span className="text-gray-600 mr-2">
+                {new Date(log.timestamp).toLocaleTimeString()}
+              </span>
+              {log.message}
+            </div>
+          ))}
+          <div ref={logsEndRef} />
+        </div>
+      )}
     </div>
   );
 }
