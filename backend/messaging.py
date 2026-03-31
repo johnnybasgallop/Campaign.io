@@ -41,29 +41,17 @@ async def run_campaign(
     await log("started", f"Campaign started — {len(recipients)} recipients")
 
     async with TelegramClient(SESSION, api_id, api_hash) as client:
-        # Fetch all participants and build a lookup by user_id so we can
-        # send using the resolved entity rather than a bare integer ID.
-        # StringSession has no local cache so bare IDs fail without this.
-        group_id = recipients[0].group_id
-        await log("info", f"Caching entities from group {group_id}...")
-        try:
-            participants = await client.get_participants(group_id, limit=None, aggressive=True)
-        except ValueError:
-            await log("failed", "The messenger account is not a member of the target group — please join the group and retry.", "error")
-            state["status"] = "complete"
-            return
-        entity_map = {p.id: p for p in participants}
-        await log("info", f"Cached {len(entity_map)} entities, sending messages...")
-
         for i, recipient in enumerate(recipients):
             if state.get("cancelled"):
                 await log("cancelled", "Campaign cancelled by user")
                 break
 
-            entity = entity_map.get(recipient.telegram_id)
-            if entity is None:
+            # Resolve entity individually — avoids the 200-member cap from get_participants
+            try:
+                entity = await client.get_input_entity(recipient.telegram_id)
+            except ValueError:
                 state["failed"] += 1
-                await log("skipped", f"Skipped {recipient.telegram_id}: not found in group cache", "warning")
+                await log("skipped", f"Skipped {recipient.telegram_id}: could not resolve entity", "warning")
                 continue
 
             try:
@@ -75,7 +63,6 @@ async def run_campaign(
                 wait = e.seconds + 10
                 await log("flood_wait", f"Flood wait — pausing {wait}s", "warning")
                 await asyncio.sleep(wait)
-                # Retry once after the flood wait clears
                 try:
                     await client.send_message(entity, message)
                     state["sent"] += 1
@@ -85,16 +72,8 @@ async def run_campaign(
                     await log("failed", f"Retry failed for {recipient.telegram_id}: {retry_err}", "error")
 
             except PeerFloodError:
-                wait = 30
-                await log("flood_wait", f"PeerFlood — account flagged for too many DMs, pausing {wait}s", "warning")
-                await asyncio.sleep(wait)
-                try:
-                    await client.send_message(entity, message)
-                    state["sent"] += 1
-                    await log("sent", f"[{i+1}/{len(recipients)}] Sent to {recipient.telegram_id} (retry)")
-                except Exception as retry_err:
-                    state["failed"] += 1
-                    await log("failed", f"Retry failed for {recipient.telegram_id}: {retry_err}", "error")
+                await log("failed", f"Skipped {recipient.telegram_id}: account restricted from messaging non-contacts (PeerFlood)", "error")
+                state["failed"] += 1
 
             except (UserIsBlockedError, InputUserDeactivatedError) as e:
                 state["failed"] += 1
