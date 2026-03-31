@@ -35,6 +35,10 @@ async def messaging_campaign(
         logger.info("Entity cache populated, starting campaign...")
 
         for i, recipient in enumerate(recipients):
+            if state.get("cancelled"):
+                logger.info("Campaign cancelled — stopping.")
+                break
+
             try:
                 await client.send_message(recipient.telegram_id, message)
                 state["sent"] += 1
@@ -65,7 +69,8 @@ async def messaging_campaign(
             else:
                 await asyncio.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
 
-    state["status"] = "complete"
+    if not state.get("cancelled"):
+        state["status"] = "complete"
     result = {"total": len(recipients), "sent": state["sent"], "failed": state["failed"]}
     logger.info(f"Campaign complete: {result}")
     return result

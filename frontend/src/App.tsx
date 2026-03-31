@@ -5,11 +5,22 @@ import "./index.css";
 const API = "http://localhost:8000";
 
 type CampaignStatus = {
-  status: "running" | "complete";
+  status: "running" | "complete" | "cancelled";
   total: number;
   sent: number;
   failed: number;
 };
+
+const BATCH_SIZE = 50;
+const BATCH_PAUSE = 60;
+const AVG_MSG_DELAY = 5.5;
+
+function formatTime(seconds: number): string {
+  if (seconds < 60) return `~${Math.round(seconds)}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return s > 0 ? `~${m}m ${s}s` : `~${m}m`;
+}
 
 function ProgressCard({ campaignId }: { campaignId: string }) {
   const [data, setData] = useState<CampaignStatus | null>(null);
@@ -21,7 +32,7 @@ function ProgressCard({ campaignId }: { campaignId: string }) {
       if (!res.ok) return;
       const json: CampaignStatus = await res.json();
       setData(json);
-      if (json.status === "complete" && intervalRef.current) {
+      if (json.status !== "running" && intervalRef.current) {
         clearInterval(intervalRef.current);
       }
     };
@@ -35,28 +46,51 @@ function ProgressCard({ campaignId }: { campaignId: string }) {
 
   if (!data) return null;
 
-  const pct = data.total > 0 ? Math.round(((data.sent + data.failed) / data.total) * 100) : 0;
+  const processed = data.sent + data.failed;
+  const remaining = data.total - processed;
+  const pct = data.total > 0 ? Math.round((processed / data.total) * 100) : 0;
+  const isRunning = data.status === "running";
   const isComplete = data.status === "complete";
+  const isCancelled = data.status === "cancelled";
+
+  const batchPausesRemaining = Math.floor(remaining / BATCH_SIZE) * BATCH_PAUSE;
+  const estimatedSeconds = remaining * AVG_MSG_DELAY + batchPausesRemaining;
+
+  async function handleCancel() {
+    await fetch(`${API}/campaign/${campaignId}/cancel`, { method: "POST" });
+  }
 
   return (
-    <div className="mt-10 rounded-2xl border border-purple-100 bg-purple-50 p-6">
+    <div className="rounded-2xl border border-purple-100 bg-purple-50 p-6 mb-10">
       <div className="flex items-center justify-between mb-4">
         <span className="text-sm font-semibold text-purple-900">Campaign Progress</span>
-        <span
-          className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-            isComplete
-              ? "bg-green-100 text-green-700"
-              : "bg-purple-100 text-purple-700"
-          }`}
-        >
-          {isComplete ? "Complete" : "Running"}
-        </span>
+        <div className="flex items-center gap-2">
+          <span
+            className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+              isComplete
+                ? "bg-green-100 text-green-700"
+                : isCancelled
+                ? "bg-red-100 text-red-600"
+                : "bg-purple-100 text-purple-700"
+            }`}
+          >
+            {isComplete ? "Complete" : isCancelled ? "Cancelled" : "Running"}
+          </span>
+          {isRunning && (
+            <button
+              onClick={handleCancel}
+              className="text-xs font-medium px-2.5 py-1 rounded-full bg-red-50 text-red-500 hover:bg-red-100 transition"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Progress bar */}
       <div className="w-full bg-purple-100 rounded-full h-2 mb-5">
         <div
-          className="bg-purple-800 h-2 rounded-full transition-all duration-500"
+          className={`h-2 rounded-full transition-all duration-500 ${isCancelled ? "bg-red-400" : "bg-purple-800"}`}
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -77,11 +111,13 @@ function ProgressCard({ campaignId }: { campaignId: string }) {
         </div>
       </div>
 
-      {!isComplete && (
-        <p className="text-xs text-gray-400 text-center mt-4">
-          {pct}% complete — updating every 2s
-        </p>
-      )}
+      <p className="text-xs text-gray-400 text-center mt-4">
+        {isComplete
+          ? `${data.sent} sent, ${data.failed} failed`
+          : isCancelled
+          ? `Cancelled after ${data.sent} sent, ${data.failed} failed`
+          : `${pct}% complete · Est. ${formatTime(estimatedSeconds)} remaining`}
+      </p>
     </div>
   );
 }
@@ -141,6 +177,9 @@ function Dashboard() {
           Send a message to a Telegram group.
         </p>
 
+        {/* Progress tracker */}
+        {campaignId && <ProgressCard campaignId={campaignId} />}
+
         <div className="space-y-6">
           {/* Group select */}
           <div>
@@ -190,8 +229,6 @@ function Dashboard() {
           </button>
         </div>
 
-        {/* Progress tracker */}
-        {campaignId && <ProgressCard campaignId={campaignId} />}
       </main>
     </div>
   );

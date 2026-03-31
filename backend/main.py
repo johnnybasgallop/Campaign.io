@@ -61,6 +61,7 @@ async def send_campaign(request: CampaignRequest, background_tasks: BackgroundTa
         "total": len(recipients),
         "sent": 0,
         "failed": 0,
+        "cancelled": False,
     }
 
     background_tasks.add_task(
@@ -75,3 +76,15 @@ async def campaign_status(campaign_id: str):
     if campaign_id not in campaigns:
         raise HTTPException(status_code=404, detail="Campaign not found")
     return campaigns[campaign_id]
+
+
+@app.post("/campaign/{campaign_id}/cancel")
+async def cancel_campaign(campaign_id: str):
+    if campaign_id not in campaigns:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    state = campaigns[campaign_id]
+    if state["status"] != "running":
+        raise HTTPException(status_code=400, detail="Campaign is not running")
+    state["cancelled"] = True
+    state["status"] = "cancelled"
+    return {"status": "cancelled"}
