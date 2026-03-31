@@ -46,7 +46,12 @@ async def run_campaign(
         # StringSession has no local cache so bare IDs fail without this.
         group_id = recipients[0].group_id
         await log("info", f"Caching entities from group {group_id}...")
-        participants = await client.get_participants(group_id)
+        try:
+            participants = await client.get_participants(group_id)
+        except ValueError:
+            await log("failed", "The messenger account is not a member of the target group — please join the group and retry.", "error")
+            state["status"] = "complete"
+            return
         entity_map = {p.id: p for p in participants}
         await log("info", f"Cached {len(entity_map)} entities, sending messages...")
 
