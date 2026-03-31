@@ -6,12 +6,14 @@ from typing import Awaitable, Callable
 
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, InputUserDeactivatedError, UserIsBlockedError
+from telethon.sessions import StringSession
 
 from db import Recipient
 
 logger = logging.getLogger(__name__)
 
-SESSION = os.getenv("SESSION_PATH", "campaign_session")
+# Use StringSession from env var in production, fall back to file-based session locally
+SESSION = StringSession(os.getenv("TELEGRAM_SESSION")) if os.getenv("TELEGRAM_SESSION") else "campaign_session"
 BATCH_SIZE = 50
 BATCH_PAUSE = 60  # seconds between batches to avoid Telegram rate limits
 MIN_DELAY = 3     # min seconds between individual messages
